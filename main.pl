@@ -20,8 +20,8 @@ load_products(File) :-
   read_json_dict(File, List),
   retractall(product(_,_,_,_,_)),
   forall(member(D, List),
-    ( IdS=D.get(id), Name=D.get(name), Cat=D.get(category),
-      Brand=D.get(brand), Price=D.get(price),
+    ( IdS = D.get(id), Name = D.get(name), Cat = D.get(category),
+      Brand = D.get(brand), Price = D.get(price),
       atom_string(Id, IdS),
       atom_string(CatA, Cat),
       atom_string(BrandA, Brand),
@@ -177,7 +177,7 @@ pad_money(N, W) :- format('ARS ~d~t~*|', [N, W]).
 
 print_header :-
   nl, writeln('Carrito:'), nl,
-  format('~|~`0t~w~3+~w~18+~w~26+~w~38+~w~50+~n', [
+  format('~|~`0t~w~3+ ~w~22+~w~30+~w~42+~w~54+~n', [
     'N°', 'Producto', 'Cantidad', 'Precio Unitario', 'Subtotal'
   ]),
   line_sep.
@@ -187,7 +187,7 @@ print_items :-
     cart_item(I,Pid,Qty),
     ( product(Pid, Name, _, _, Price),
       line_subtotal(Pid, Qty, Sub),
-      format('~|~`0t~d~3+~w~18+~d~26+ARS ~d~38+ARS ~d~50+~n', [I, Name, Qty, Price, Sub])
+      format('~|~`0t~d~3+ ~w~22+~d~30+ARS ~d~42+ARS ~d~54+~n', [I, Name, Qty, Price, Sub])
     )
   ).
 
@@ -198,12 +198,18 @@ print_ticket :-
   best_cart_discount(S0, S1, CartLabel, Dcart),
   Sfinal is S1 - Dcart,
   print_header, print_items, line_sep,
-  format('Subtotal:~t~*|~d~n~n', [74, S0]),
+  % Imprime el subtotal
+  format('Subtotal:~t~*|~d~n', [74, S0]),
+  % Línea separadora
+  format('~`-t~*|~n', [74]),
+  % Imprime los descuentos de línea: nombre a la izquierda, valor alineado con el subtotal y el - justo antes del número
   forall(member(app(Label,Amt), LineApps),
-    format('Aplicado (línea):~t~*|~w~t~*| -~d~n', [24, Label, 44, Amt])),
+    format('~w~t-~d~*|~n', [Label, Amt, 75])),
+  % Imprime el total intermedio
   format('~nTotal intermedio:~t~*|~d~n~n', [74, S1]),
+  % Si hay descuento de carrito, igual formato
   ( CartLabel \= none ->
-      format('Descuento especial:~t~*|~w~t~*| -~d~n', [24, CartLabel, 44, Dcart])
+      format('~w~t-~d~*|~n', [CartLabel, Dcart, 75])
     ; true ),
   nl, line_sep, format('TOTAL:~t~*|~d~n', [74, Sfinal]).
 
