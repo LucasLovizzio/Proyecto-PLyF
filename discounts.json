@@ -1,0 +1,13 @@
+{
+  "line_discounts": [
+    {"id":"d3","type":"bogo_category","category":"snacks","buy":3,"pay":2,"label":"3x2 snacks"},
+    {"id":"d1","type":"percent_category","category":"electronics","percent":10,"label":"10% electrónica"},
+    {"id":"dBrand","type":"percent_brand","brand":"brand_a","percent":5,"label":"5% marca A (ejemplo)"}
+  ],
+  "cart_discounts": [
+    {"id":"d4","type":"money_off","amount":1000,"min_total":8000,"label":"ARS 1000 off si >=8000","exclusive":false,"priority":60},
+    {"id":"d2","type":"percent_cart","percent":10,"min_total":3000,"label":"SAVE10 10%","code":"SAVE10","exclusive":false,"priority":50},
+    {"id":"d5","type":"tiered_cart","tiers":[{"threshold":5000,"percent":5},{"threshold":10000,"percent":12}],
+     "label":"Escalonado 5%/12% (exclusivo)","exclusive":true,"priority":70}
+  ]
+}

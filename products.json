@@ -1,0 +1,5 @@
+[
+  {"id":"tv50","name":"TV LED 50\"","category":"electronics","brand":"brand_a","price":5000},
+  {"id":"phone","name":"Smartphone XYZ","category":"electronics","brand":"brand_b","price":2500},
+  {"id":"lays","name":"Snack Papas Lays","category":"snacks","brand":"brand_c","price":300}
+]
