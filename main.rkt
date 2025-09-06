@@ -1,159 +1,164 @@
 #lang racket
 ;; Ejecutar:
 ;; racket main.rkt --products products.json --cart cart.json --discounts discounts.json [--coupon SAVE10]
+;; (también acepta: --productos, --carrito, --descuentos, --cupon)
 
 (require json)
 
-(struct product (id name category brand price) #:transparent)
-(struct line (pid qty) #:transparent)
-(struct cart (lines) #:transparent)
+;; ---- TIMER: tiempo de inicio del script (incluye carga de JSON, etc.) ----
+(define *t0-ms* (current-inexact-milliseconds))
 
-;; ------------------- CLI -------------------
-(define products-file (make-parameter "products.json"))
-(define cart-file      (make-parameter "cart.json"))
-(define discounts-file (make-parameter "discounts.json"))
-(define coupon-code    (make-parameter #f))
+;; =================== Modelos ===================
+(struct producto (id nombre categoria marca precio) #:transparent)
+(struct linea (pid cant) #:transparent)
+(struct carrito (lineas) #:transparent)
+
+;; =================== CLI ===================
+(define archivo-productos (make-parameter "products.json"))
+(define archivo-carrito   (make-parameter "cart.json"))
+(define archivo-desc      (make-parameter "discounts.json"))
+(define codigo-cupon      (make-parameter #f))
 
 (command-line
  #:once-each
- [("--products") p "Archivo de productos" (products-file p)]
- [("--cart")      c "Archivo de carrito"   (cart-file c)]
- [("--discounts") d "Archivo de descuentos" (discounts-file d)]
- [("--coupon")    k "Cupón (opcional)"     (coupon-code k)])
+ [("--products" "--productos") p "Archivo de productos"   (archivo-productos p)]
+ [("--cart"     "--carrito")   c "Archivo de carrito"     (archivo-carrito c)]
+ [("--discounts" "--descuentos") d "Archivo de descuentos" (archivo-desc d)]
+ [("--coupon"   "--cupon")     k "Cupón (opcional)"       (codigo-cupon k)])
 
-;; ------------------- Carga JSON -------------------
-(define (read-json-file p)
+;; =================== Carga JSON ===================
+(define (leer-json p)
   (call-with-input-file p read-json))
 
-(define (load-products path)
-  (for/hash ([d (in-list (read-json-file path))])
+(define (cargar-productos ruta)
+  (for/hash ([d (in-list (leer-json ruta))])
     (define id   (string->symbol (hash-ref d 'id)))
-    (define name (hash-ref d 'name))
+    (define nom  (hash-ref d 'name))
     (define cat  (string->symbol (hash-ref d 'category)))
-    (define br   (string->symbol (hash-ref d 'brand)))
-    (define pr   (hash-ref d 'price))
-    (values id (product id name cat br pr))))
+    (define mar  (string->symbol (hash-ref d 'brand)))
+    (define pre  (hash-ref d 'price))
+    (values id (producto id nom cat mar pre))))
 
-(define (load-cart path)
-  (cart
-   (for/list ([d (in-list (read-json-file path))])
-     (line (string->symbol (hash-ref d 'product_id))
-           (hash-ref d 'qty)))))
+(define (cargar-carrito ruta)
+  (carrito
+   (for/list ([d (in-list (leer-json ruta))])
+     (linea (string->symbol (hash-ref d 'product_id))
+            (hash-ref d 'qty)))))
 
-(define (load-discounts path)
-  (define d (read-json-file path))
+(define (cargar-descuentos ruta)
+  (define d (leer-json ruta))
   (values (hash-ref d 'line_discounts)
           (hash-ref d 'cart_discounts)))
 
-(define products #f)
-(define cartA #f)
-(define line-rules '())
-(define cart-rules '())
+(define productos #f)
+(define carritoA  #f)
+(define reglas-linea   '())
+(define reglas-carrito '())
 
-(set! products (load-products (products-file)))
-(set! cartA     (load-cart (cart-file)))
-(let-values ([(lr cr) (load-discounts (discounts-file))])
-  (set! line-rules lr) (set! cart-rules cr))
+(set! productos (cargar-productos (archivo-productos)))
+(set! carritoA  (cargar-carrito (archivo-carrito)))
+(let-values ([(rl rc) (cargar-descuentos (archivo-desc))])
+  (set! reglas-linea rl) (set! reglas-carrito rc))
 
-;; ------------------- Helpers -------------------
-(define (line-subtotal ln)
-  (define p (hash-ref products (line-pid ln)))
-  (* (product-price p) (line-qty ln)))
+;; =================== Helpers ===================
+(define (producto-de pid) (hash-ref productos pid))
 
-(define (cart-subtotal c)
-  (for/sum ([ln (in-list (cart-lines c))]) (line-subtotal ln)))
+(define (subtotal-linea ln)
+  (define p (producto-de (linea-pid ln)))
+  (* (producto-precio p) (linea-cant ln)))
 
-(define (product-of pid) (hash-ref products pid))
+(define (subtotal-carrito c)
+  (for/sum ([ln (in-list (carrito-lineas c))]) (subtotal-linea ln)))
 
-;; ------------------- Descuentos de línea -------------------
-(define (line-rule-amount rule c)
-  (define typ (hash-ref rule 'type))
+;; =================== Descuentos de línea ===================
+(define (monto-regla-linea regla c)
+  (define tipo (hash-ref regla 'type))
   (cond
-    [(string=? typ "percent_category")
-     (define cat (string->symbol (hash-ref rule 'category)))
-     (define perc (hash-ref rule 'percent))
-     (for/sum ([ln (in-list (cart-lines c))])
-       (define p (product-of (line-pid ln)))
-       (if (eq? (product-category p) cat)
-           (inexact->exact (round (* (line-subtotal ln) perc 1/100)))
+    [(string=? tipo "percent_category")
+     (define cat (string->symbol (hash-ref regla 'category)))
+     (define perc (hash-ref regla 'percent))
+     (for/sum ([ln (in-list (carrito-lineas c))])
+       (define p (producto-de (linea-pid ln)))
+       (if (eq? (producto-categoria p) cat)
+           (inexact->exact (round (* (subtotal-linea ln) perc 1/100)))
            0))]
-    [(string=? typ "percent_brand")
-     (define br (string->symbol (hash-ref rule 'brand)))
-     (define perc (hash-ref rule 'percent))
-     (for/sum ([ln (in-list (cart-lines c))])
-       (define p (product-of (line-pid ln)))
-       (if (eq? (product-brand p) br)
-           (inexact->exact (round (* (line-subtotal ln) perc 1/100)))
+    [(string=? tipo "percent_brand")
+     (define mar (string->symbol (hash-ref regla 'brand)))
+     (define perc (hash-ref regla 'percent))
+     (for/sum ([ln (in-list (carrito-lineas c))])
+       (define p (producto-de (linea-pid ln)))
+       (if (eq? (producto-marca p) mar)
+           (inexact->exact (round (* (subtotal-linea ln) perc 1/100)))
            0))]
-    [(string=? typ "bogo_category")
-     (define cat (string->symbol (hash-ref rule 'category)))
-     (define buy (hash-ref rule 'buy))
-     (define pay (hash-ref rule 'pay))
+    [(string=? tipo "bogo_category")
+     (define cat (string->symbol (hash-ref regla 'category)))
+     (define buy (hash-ref regla 'buy))
+     (define pay (hash-ref regla 'pay))
      (define free-each (- buy pay))
-     (for/sum ([ln (in-list (cart-lines c))])
-       (define p (product-of (line-pid ln)))
-       (if (eq? (product-category p) cat)
-           (* (quotient (line-qty ln) buy) free-each (product-price p))
+     (for/sum ([ln (in-list (carrito-lineas c))])
+       (define p (producto-de (linea-pid ln)))
+       (if (eq? (producto-categoria p) cat)
+           (* (quotient (linea-cant ln) buy) free-each (producto-precio p))
            0))]
     [else 0]))
 
-(define (applied-line-discounts c)
+(define (descuentos-linea-aplicados c)
   (define apps
-    (for/list ([r (in-list line-rules)])
-      (define amt (line-rule-amount r c))
-      (define label (hash-ref r 'label (hash-ref r 'type)))
-      (list label amt)))
-  (define filtered (filter (lambda (x) (> (second x) 0)) apps))
-  (values filtered (for/sum ([x (in-list filtered)]) (second x))))
+    (for/list ([r (in-list reglas-linea)])
+      (define amt (monto-regla-linea r c))
+      (define etiqueta (hash-ref r 'label (hash-ref r 'type)))
+      (list etiqueta amt)))
+  (define filtrados (filter (lambda (x) (> (second x) 0)) apps))
+  (values filtrados (for/sum ([x (in-list filtrados)]) (second x))))
 
-;; ------------------- Descuentos de carrito (único) -------------------
-(define (eligible-cart-rule? r subtotal0)
-  (define typ (hash-ref r 'type))
+;; =================== Descuentos de carrito (único) ===================
+(define (regla-carrito-elegible? r subtotal0)
+  (define tipo (hash-ref r 'type))
   (cond
-    [(string=? typ "money_off")
+    [(string=? tipo "money_off")
      (>= subtotal0 (hash-ref r 'min_total))]
-    [(string=? typ "percent_cart")
+    [(string=? tipo "percent_cart")
      (and (>= subtotal0 (hash-ref r 'min_total))
           (let ([code (hash-ref r 'code #f)]
-                [user (coupon-code)])
+                [user (codigo-cupon)])
             (or (not code) (and user (string=? code user)))))]
-    [(string=? typ "tiered_cart")
+    [(string=? tipo "tiered_cart")
      (for/or ([t (in-list (hash-ref r 'tiers))])
        (>= subtotal0 (hash-ref t 'threshold)))]
     [else #f]))
 
-(define (cart-rule-amount r subtotal0 interim1)
-  (define typ (hash-ref r 'type))
+(define (monto-regla-carrito r subtotal0 interino1)
+  (define tipo (hash-ref r 'type))
   (cond
-    [(string=? typ "money_off") (hash-ref r 'amount)]
-    [(string=? typ "percent_cart")
-     (inexact->exact (round (* interim1 (hash-ref r 'percent) 1/100)))]
-    [(string=? typ "tiered_cart")
+    [(string=? tipo "money_off") (hash-ref r 'amount)]
+    [(string=? tipo "percent_cart")
+     (inexact->exact (round (* interino1 (hash-ref r 'percent) 1/100)))]
+    [(string=? tipo "tiered_cart")
      (define tiers (hash-ref r 'tiers))
-     (define bestp
+     (define mejor%
        (for/fold ([bp -1]) ([t (in-list tiers)])
          (define thr (hash-ref t 'threshold))
          (define p   (hash-ref t 'percent))
          (if (and (>= subtotal0 thr) (> p bp)) p bp)))
-     (if (< bestp 0) 0 (inexact->exact (round (* interim1 bestp 1/100))))]
+     (if (< mejor% 0) 0 (inexact->exact (round (* interino1 mejor% 1/100))))]
     [else 0]))
 
-(define (choose-best-cart subtotal0 interim1)
+(define (elegir-mejor-carrito subtotal0 interino1)
   (define cands
-    (for/list ([r (in-list cart-rules)])
-      (if (eligible-cart-rule? r subtotal0)
-          (let* ([amt   (cart-rule-amount r subtotal0 interim1)]
-                 [label (hash-ref r 'label (hash-ref r 'type))]
+    (for/list ([r (in-list reglas-carrito)])
+      (if (regla-carrito-elegible? r subtotal0)
+          (let* ([amt   (monto-regla-carrito r subtotal0 interino1)]
+                 [etq   (hash-ref r 'label (hash-ref r 'type))]
                  [prio  (hash-ref r 'priority 1000)])
-            (list label amt prio))
+            (list etq amt prio))
           (list #f 0 1000))))
-  (define filtered (filter (lambda (x) (and (first x) (> (second x) 0))) cands))
-  (if (null? filtered)
-      (values #f 0)                                  ; <-- 2 valores
-      (let* ([max-amt (apply max (map second filtered))]
-             [ties    (filter (lambda (x) (= (second x) max-amt)) filtered)]
-             [best    (argmin (lambda (x) (third x)) ties)])
-        (values (first best) (second best)))))        ; <-- 2 valores
+  (define filtrados (filter (lambda (x) (and (first x) (> (second x) 0))) cands))
+  (if (null? filtrados)
+      (values #f 0)
+      (let* ([max-amt (apply max (map second filtrados))]
+             [empates (filter (lambda (x) (= (second x) max-amt)) filtrados)]
+             [mejor   (argmin (lambda (x) (third x)) empates)])
+        (values (first mejor) (second mejor)))))
 
 ;; Devuelve SOLO el elemento con menor f(x)
 (define (argmin f xs)
@@ -165,117 +170,119 @@
               (loop x v (cdr rest))
               (loop best bestv (cdr rest)))))))
 
-
-;; ------------------- Impresión -------------------
-
+;; =================== Impresión ===================
 ;; Anchos de columnas
-(define W-IDX+NAME 26)   ; "001" + nombre
-(define W-QTY      27)   ; Cantidad
-(define W-PRICE    35)   ; Precio Unitario
-(define TOTAL-COL  70)   ; Columna de alineación derecha para totales
+(define W-IDX+NOMBRE 26)  ; "001" + nombre
+(define W-CANT       27)  ; Cantidad
+(define W-PRECIO     35)  ; Precio Unitario
+(define COL-TOTAL    70)  ; Columna para alinear totales a la derecha
 
-(define (truncate s max)
+(define (truncar s max)
   (define str (format "~a" s))
   (if (> (string-length str) max)
       (string-append (substring str 0 (max 0 (- max 1))) "…")
       str))
 
-(define (pad-right s w)
+(define (pad-der s w)
   (define str (format "~a" s))
   (define n   (string-length str))
   (if (>= n w) str (string-append str (make-string (- w n) #\space))))
 
-;; ---> reemplaza "~3,'0d" con un zero-pad casero
-(define (zero-pad n width)
+(define (cero-pad n w)
   (define s (number->string n))
-  (string-append (make-string (max 0 (- width (string-length s))) #\0) s))
+  (string-append (make-string (max 0 (- w (string-length s))) #\0) s))
 
-(define (row-idx+name idx name)
-  (pad-right (string-append (zero-pad idx 3)
-                            (truncate name (- W-IDX+NAME 3)))
-             W-IDX+NAME))
+(define (col-idx+nombre idx nombre)
+  (pad-der (string-append (cero-pad idx 3)
+                          (truncar nombre (- W-IDX+NOMBRE 3)))
+           W-IDX+NOMBRE))
 
-(define (row-qty qty)
-  (pad-right (format "~a" qty) W-QTY))
-
-(define (row-price n)
-  (pad-right (format "ARS ~a" n) W-PRICE))
+(define (col-cant c)   (pad-der (format "~a" c) W-CANT))
+(define (col-precio n) (pad-der (format "ARS ~a" n) W-PRECIO))
 
 (define (sep) (printf "~a~n" (make-string 96 #\-)))
 
-(define (print-header)
+(define (imprimir-encabezado)
   (newline)
   (printf "Carrito:~n~n")
   (printf "~a~a~a~a~n"
-          (pad-right "N°Producto"      W-IDX+NAME)
-          (pad-right "Cantidad"        W-QTY)
-          (pad-right "Precio Unitario" W-PRICE)
+          (pad-der "N°Producto"      W-IDX+NOMBRE)
+          (pad-der "Cantidad"        W-CANT)
+          (pad-der "Precio Unitario" W-PRECIO)
           "Subtotal")
   (sep))
 
-(define (print-items c)
-  (for ([ln (in-list (cart-lines c))]
+(define (imprimir-items c)
+  (for ([ln (in-list (carrito-lineas c))]
         [idx (in-naturals 1)])
-    (define p   (product-of (line-pid ln)))
-    (define sub (line-subtotal ln))
+    (define p   (producto-de (linea-pid ln)))
+    (define sub (subtotal-linea ln))
     (printf "~a~a~aARS ~a~n"
-            (row-idx+name idx (product-name p))
-            (row-qty (line-qty ln))
-            (row-price (product-price p))
+            (col-idx+nombre idx (producto-nombre p))
+            (col-cant (linea-cant ln))
+            (col-precio (producto-precio p))
             sub))
   (sep))
 
-;; Alinear cosas como "Subtotal: .... 8400" a TOTAL-COL
-(define (print-right label value)
-  (define left (format "~a:" label))
+;; Alinea "Etiqueta: .... valor" en la columna COL-TOTAL
+(define (imprimir-derecha etiqueta valor)
+  (define izq (format "~a:" etiqueta))
   (printf "~a~a~a~n"
-          left
-          (make-string (max 1 (- TOTAL-COL (string-length left))) #\space)
-          value))
+          izq
+          (make-string (max 1 (- COL-TOTAL (string-length izq))) #\space)
+          valor))
 
-(define (print-applied-line label amt)
-  (define left (format "Aplicado (línea):   ~a" label))
+(define (imprimir-desc-linea etiqueta monto)
+  (define izq (format "Aplicado (línea):   ~a" etiqueta))
   (printf "~a~a-~a~n"
-          left
-          (make-string (max 1 (- TOTAL-COL (string-length left))) #\space)
-          amt))
+          izq
+          (make-string (max 1 (- COL-TOTAL (string-length izq))) #\space)
+          monto))
 
-(define (print-cart-discount label amt)
-  (define left (format "Descuento especial: ~a" label))
+(define (imprimir-desc-carrito etiqueta monto)
+  (define izq (format "Descuento especial: ~a" etiqueta))
   (printf "~a~a-~a~n"
-          left
-          (make-string (max 1 (- TOTAL-COL (string-length left))) #\space)
-          amt))
+          izq
+          (make-string (max 1 (- COL-TOTAL (string-length izq))) #\space)
+          monto))
 
-(define (print-total label value)
+(define (imprimir-total etiqueta valor)
   (sep)
-  (print-right label value))
+  (imprimir-derecha etiqueta valor))
 
+;; =================== Programa principal ===================
 (define (main)
-  (define s0 (cart-subtotal cartA))
-  (define-values (line-apps dline) (applied-line-discounts cartA))
-  (define s1 (- s0 dline))
-  (define-values (cart-label dcart) (choose-best-cart s0 s1))
-  (define sfinal (- s1 dcart))
+  (define s0 (subtotal-carrito carritoA))
+  (define-values (aplicadas dlinea) (descuentos-linea-aplicados carritoA))
+  (define s1 (- s0 dlinea))
+  (define-values (etq-carrito dcarrito) (elegir-mejor-carrito s0 s1))
+  (define sfinal (- s1 dcarrito))
 
-  (print-header)
-  (print-items cartA)
+  (imprimir-encabezado)
+  (imprimir-items carritoA)
 
-  (print-right "Subtotal" s0)
+  (imprimir-derecha "Subtotal" s0)
   (newline)
 
-  (for ([x (in-list line-apps)])
-    (print-applied-line (first x) (second x)))
+  (for ([x (in-list aplicadas)])
+    (imprimir-desc-linea (first x) (second x)))
 
   (newline)
-  (print-right "Total intermedio" s1)
+  (imprimir-derecha "Total intermedio" s1)
   (newline)
 
-  (when cart-label
-    (print-cart-discount cart-label dcart)
+  (when etq-carrito
+    (imprimir-desc-carrito etq-carrito dcarrito)
     (newline))
 
-  (print-total "TOTAL" sfinal))
+  (imprimir-total "TOTAL" sfinal)
+
+  ;; ---- TIMER: imprimir duración total del script ----
+  (newline)
+  (define t1 (current-inexact-milliseconds))
+  (define dt (- t1 *t0-ms*))
+  (printf "Tiempo total: ~a ms (~a s)~n"
+          (inexact->exact (round dt))
+          (/ dt 1000.0)))
 
 (main)
-
