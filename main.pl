@@ -227,7 +227,24 @@ get_opt(Args, Key, Value, Default) :-
     -> Value = V
     ;  Value = Default ).
 
-main :-
+% filepath: c:\Users\llovi\Code\proyecto-PLyF\main.pl
+
+% Predicado para ejecutar múltiples iteraciones y calcular estadísticas
+benchmark(Iterations) :-
+  format('Ejecutando ~d iteraciones...~n', [Iterations]),
+  findall(Time,
+    ( between(1, Iterations, I),
+      ( I mod 10 =:= 0 -> format('Completadas ~d/~d iteraciones~n', [I, Iterations]) ; true ),
+      statistics(cputime, T0),
+      % Tu código principal sin halt
+      run_main_logic,
+      statistics(cputime, T1),
+      Time is (T1 - T0) * 1000 % convertir a milisegundos
+    ),
+    Times),
+  calculate_stats(Times, Iterations).
+
+run_main_logic :-
   current_prolog_flag(argv, Args),
   parse_args(Args),
   get_opt(Args, 'products', ProductsFile, 'products.json'),
@@ -236,5 +253,71 @@ main :-
   load_products(ProductsFile),
   load_cart(CartFile),
   load_discounts(DiscountsFile),
-  print_ticket,
+  % Solo calcular, no imprimir para benchmark
+  subtotal(S0),
+  applied_line_discounts(_, Dline),
+  S1 is S0 - Dline,
+  best_cart_discount(S0, S1, _, Dcart),
+  _Sfinal is S1 - Dcart.
+
+calculate_stats(Times, Iterations) :-
+  sort(Times, SortedTimes),
+  length(SortedTimes, Len),
+  nth1(1, SortedTimes, Min),
+  last(SortedTimes, Max),
+  sum_list(SortedTimes, Sum),
+  Avg is Sum / Len,
+  
+  % Mediana
+  MedianIndex is Len // 2 + 1,
+  nth1(MedianIndex, SortedTimes, Median),
+  
+  % P95
+  P95Index is ceiling(Len * 0.95),
+  nth1(P95Index, SortedTimes, P95),
+  
+  format('~n=== ESTADÍSTICAS DE RENDIMIENTO ===~n'),
+  format('Iteraciones: ~d~n', [Iterations]),
+  format('Tiempo mínimo: ~2f ms~n', [Min]),
+  format('Tiempo máximo: ~2f ms~n', [Max]),
+  format('Tiempo promedio: ~2f ms~n', [Avg]),
+  format('Mediana: ~2f ms~n', [Median]),
+  format('P95: ~2f ms~n', [P95]).
+
+% Modificar main para soportar benchmark
+main :-
+  catch(
+    main_safe,
+    Error,
+    (format('Error en main: ~w~n', [Error]), halt(1))
+  ).
+
+main_safe :-
+  format('Iniciando programa...~n'),
+  current_prolog_flag(argv, Args),
+  format('Args: ~w~n', [Args]),
+  
+  parse_args(Args),
+  format('Args parseados correctamente~n'),
+  
+  get_opt(Args, 'products', ProductsFile, 'products.json'),
+  get_opt(Args, 'cart', CartFile, 'cart.json'),
+  get_opt(Args, 'discounts', DiscountsFile, 'discounts.json'),
+  format('Archivos: ~w, ~w, ~w~n', [ProductsFile, CartFile, DiscountsFile]),
+  
+  % Verificar que existen los archivos
+  ( exists_file(ProductsFile) -> true ; (format('Error: No existe ~w~n', [ProductsFile]), fail) ),
+  ( exists_file(CartFile) -> true ; (format('Error: No existe ~w~n', [CartFile]), fail) ),
+  ( exists_file(DiscountsFile) -> true ; (format('Error: No existe ~w~n', [DiscountsFile]), fail) ),
+  
+  format('=== MIDIENDO TIEMPO DE CARGA ===~n'),
+  time((
+    load_products(ProductsFile),
+    load_cart(CartFile),
+    load_discounts(DiscountsFile)
+  )),
+  
+  format('~n=== MIDIENDO TIEMPO DE PROCESAMIENTO Y IMPRESIÓN ===~n'),
+  time(print_ticket),
+  
   halt.
